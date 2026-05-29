@@ -40,7 +40,8 @@ jobs:
                 body=$(jq -r ".[$i].body" pending_posts.json)
                 
                 echo "正在创建 Issue: $title"
-                gh issue create --title "$title" --body "$body" --label "rss,automated"
+                # 💡 移除了 --label 参数
+                gh issue create --title "$title" --body "$body"
               done
               
               # 清理临时文件
