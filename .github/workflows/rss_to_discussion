@@ -1,0 +1,58 @@
+name: Multi-RSS to GitHub Discussions
+
+on:
+  schedule:
+    - cron: '0 */4 * * *' # 每 4 小时全自动执行一次
+  workflow_dispatch: # 支持手动触发测试
+
+jobs:
+  rss-task:
+    runs-on: ubuntu-latest
+    permissions:
+      discussions: write # 💡 关键：必须赋予写 Discussion 的权限
+      contents: write    # 💡 关键：必须有写文件的权限来提交 cache.json
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Dependencies
+        run: npm install 
+
+      - name: Fetch and Filter RSS
+        run: node fetch_rss.js
+
+      - name: Create Discussions and Commit Cache
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -d "pending_posts" ]; then
+            # 遍历生成的临时配置文件
+            for meta_file in pending_posts/[0-9].md pending_posts/[0-9][0-9].md; do
+              [ -e "$meta_file" ] || continue
+              
+              title=$(jq -r '.title' "$meta_file")
+              body_file="pending_posts/$(jq -r '.bodyFile' "$meta_file")"
+              
+              echo "正在创建 Discussion: $title"
+              
+              # ✨ 使用 gh discussion create 核心命令
+              # --category 参数指定推送到哪个分类，GitHub 默认自带 "General"（公告/常规讨论）
+              # 如果你想推送到其他分类（比如你新建了一个叫 "News" 的分类），就把 "General" 改成 "News"
+              gh discussion create --title "$title" --body-file "$body_file" --category "General"
+            done
+            
+            rm -rf pending_posts
+            
+            # 将更新后的 cache.json 提交回仓库
+            git config --global user.name "github-actions[bot]"
+            git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add cache.json
+            git commit -m "chore: update rss cache [skip ci]" || echo "No changes to commit"
+            git push || echo "No changes to push"
+          fi
