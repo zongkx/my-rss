@@ -1,0 +1,58 @@
+name: Multi-RSS to GitHub Issues
+
+on:
+  schedule:
+    - cron: '0 */4 * * *' # 每 4 小时检查一次，你可以自行调整
+  workflow_dispatch:
+
+jobs:
+  rss-task:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: write # 必须有 write 权限才能把 cache.json 推回仓库
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Fetch and Filter RSS
+        run: node fetch_rss.js
+
+      - name: Create Issues and Commit Cache
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 检查是否有新文章文件
+          if [ -f "pending_posts.json" ]; then
+            # 使用 jq 循环读取新文章并使用 gh cli 创建 issue
+            # 如果系统没有 jq，ubuntu-latest 默认是自带的
+            count=$(jq '. | length' pending_posts.json)
+            
+            if [ "$count" -gt 0 ]; then
+              for i in $(seq 0 $(($count - 1))); do
+                title=$(jq -r ".[$i].title" pending_posts.json)
+                body=$(jq -r ".[$i].body" pending_posts.json)
+                
+                echo "正在创建 Issue: $title"
+                gh issue create --title "$title" --body "$body" --label "rss,automated"
+              done
+              
+              # 清理临时文件
+              rm pending_posts.json
+              
+              # 将更新后的 cache.json 提交回仓库
+              git config --global user.name "github-actions[bot]"
+              git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+              git add cache.json
+              git commit -m "chore: update rss cache [skip ci]"
+              git push
+            else
+              echo "没有新文章需要创建 Issue。"
+            fi
+          fi
