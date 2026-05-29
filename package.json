@@ -1,0 +1,9 @@
+{
+  "name": "github-action-rss-bot",
+  "version": "1.0.0",
+  "main": "fetch_rss.js",
+  "dependencies": {
+    "rss-parser": "^3.13.0",
+    "turndown": "^7.2.0" 
+  }
+}
