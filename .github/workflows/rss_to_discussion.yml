@@ -1,0 +1,55 @@
+name: Multi-RSS to GitHub Discussions
+
+on:
+  schedule:
+    - cron: '0 */4 * * *'
+  workflow_dispatch:
+
+jobs:
+  rss-task:
+    runs-on: ubuntu-latest
+    permissions:
+      discussions: write
+      contents: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Fetch and Filter RSS
+        run: node fetch_rss.js
+
+      - name: Create Discussions and Commit Cache
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -f "pending_posts.json" ]; then
+            count=$(jq '. | length' pending_posts.json)
+            
+            if [ "$count" -gt 0 ]; then
+              for i in $(seq 0 $(($count - 1))); do
+                title=$(jq -r ".[$i].title" pending_posts.json)
+                body=$(jq -r ".[$i].body" pending_posts.json)
+                
+                echo "正在创建 Discussion: $title"
+                # --category 请替换为你仓库中实际存在的分类名，例如 "General" 或 "News"
+                gh discussion create --title "$title" --body "$body" --category "General"
+              done
+              
+              rm pending_posts.json
+              
+              # 提交缓存
+              git config --global user.name "github-actions[bot]"
+              git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+              git add cache.json
+              git commit -m "chore: update rss cache [skip ci]"
+              git push
+            else
+              echo "没有新文章需要创建 Discussion。"
+            fi
+          fi
