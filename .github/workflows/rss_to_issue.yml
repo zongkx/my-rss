@@ -2,7 +2,7 @@ name: Multi-RSS to GitHub Issues
 
 on:
   schedule:
-    - cron: '0 */4 * * *' # 每 4 小时检查一次，你可以自行调整
+    - cron: '0 */4 * * *'
   workflow_dispatch:
 
 jobs:
@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       issues: write
-      contents: write # 必须有 write 权限才能把 cache.json 推回仓库
+      contents: write
 
     steps:
       - name: Checkout Code
@@ -20,6 +20,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
 
       - name: Fetch and Filter RSS
         run: node fetch_rss.js
@@ -28,32 +32,29 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 检查是否有新文章文件
-          if [ -f "pending_posts.json" ]; then
-            # 使用 jq 循环读取新文章并使用 gh cli 创建 issue
-            # 如果系统没有 jq，ubuntu-latest 默认是自带的
-            count=$(jq '. | length' pending_posts.json)
+          # 检查是否有新文章目录
+          if [ -d "pending_posts" ]; then
+            # 遍历所有生成的 .md 配置文件（排除正文文件本身）
+            for meta_file in pending_posts/[0-9].md pending_posts/[0-9][0-9].md; do
+              # 确保文件存在
+              [ -e "$meta_file" ] || continue
+              
+              # 解析出标题和对应的正文文件名
+              title=$(jq -r '.title' "$meta_file")
+              body_file="pending_posts/$(jq -r '.bodyFile' "$meta_file")"
+              
+              echo "正在创建 Issue: $title"
+              # ✨ 核心改进：使用 --body-file 完美传输带换行的长文本正文
+              gh issue create --title "$title" --body-file "$body_file" --label "rss,automated"
+            done
             
-            if [ "$count" -gt 0 ]; then
-              for i in $(seq 0 $(($count - 1))); do
-                title=$(jq -r ".[$i].title" pending_posts.json)
-                body=$(jq -r ".[$i].body" pending_posts.json)
-                
-                echo "正在创建 Issue: $title"
-                # 💡 移除了 --label 参数
-                gh issue create --title "$title" --body "$body"
-              done
-              
-              # 清理临时文件
-              rm pending_posts.json
-              
-              # 将更新后的 cache.json 提交回仓库
-              git config --global user.name "github-actions[bot]"
-              git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-              git add cache.json
-              git commit -m "chore: update rss cache [skip ci]"
-              git push
-            else
-              echo "没有新文章需要创建 Issue。"
-            fi
+            # 清理临时目录
+            rm -rf pending_posts
+            
+            # 将更新后的 cache.json 提交回仓库
+            git config --global user.name "github-actions[bot]"
+            git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add cache.json
+            git commit -m "chore: update rss cache [skip ci]" || echo "No changes to commit"
+            git push || echo "No changes to push"
           fi
