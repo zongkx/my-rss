@@ -12,7 +12,6 @@ const turndownService = new TurndownService({
 // ================= 配置区域 =================
 const RSS_FEEDS = [
     'https://sspai.com/feed',
-    'https://www.v2ex.com/index.xml',
     'https://rss.huxiu.com',
     'https://www.infoq.cn/feed',
 ];
