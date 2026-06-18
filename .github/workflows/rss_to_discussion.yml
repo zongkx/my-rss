@@ -30,6 +30,8 @@ jobs:
       - name: Create Discussions and Commit Cache
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 【新配置】设置需要保留的天数，超过这个天数的旧讨论会被自动清理
+          DAYS_TO_KEEP: 7
         run: |
           if [ -d "pending_posts" ]; then
             # 1. 动态获取当前仓库的 Repository ID 和 "General" 分类的 ID
@@ -52,6 +54,68 @@ jobs:
               echo "错误：未能在仓库中找到名为 'General' 的 Discussion 分类，请先确认开启了 Discussions 功能！"
               exit 1
             fi
+
+            # ==========================================
+            # 【新加入的清理逻辑】
+            # ==========================================
+            echo "开始检查并清理超过 $DAYS_TO_KEEP 天的旧讨论..."
+            CUTOFF_DATE=$(date -u -d "$DAYS_TO_KEEP days ago" +"%Y-%m-%dT%H:%M:%SZ")
+            echo "截止时间为: $CUTOFF_DATE"
+
+            HAS_NEXT_PAGE=true
+            END_CURSOR="null"
+
+            while [ "$HAS_NEXT_PAGE" = "true" ]; do
+              if [ "$END_CURSOR" = "null" ]; then
+                cursor_param=""
+              else
+                cursor_param=", after: \"$END_CURSOR\""
+              fi
+
+              # 分页查询当前仓库里的讨论
+              list_data=$(gh api graphql -f query='
+                query($owner:String!, $name:String!) {
+                  repository(owner:$owner, name:$name) {
+                    discussions(first:100'"$cursor_param"', orderBy: {field: CREATED_AT, direction: DESC}) {
+                      pageInfo { hasNextPage endCursor }
+                      nodes {
+                        id
+                        title
+                        createdAt
+                        category { name }
+                      }
+                    }
+                  }
+                }' -F owner="${{ github.repository_owner }}" -F name="${{ github.event.repository.name }}")
+
+              HAS_NEXT_PAGE=$(echo "$list_data" | jq -r '.data.repository.discussions.pageInfo.hasNextPage')
+              END_CURSOR=$(echo "$list_data" | jq -r '.data.repository.discussions.pageInfo.endCursor')
+
+              # 筛选出属于 General 分类且早于截止时间的旧数据
+              old_discussions=$(echo "$list_data" | jq -c '.data.repository.discussions.nodes[] | select(.category.name=="General")')
+
+              if [ -n "$old_discussions" ]; then
+                echo "$old_discussions" | while read -r row; do
+                  disc_id=$(echo "$row" | jq -r '.id')
+                  disc_title=$(echo "$row" | jq -r '.title')
+                  disc_created=$(echo "$row" | jq -r '.createdAt')
+
+                  if [[ "$disc_created" < "$CUTOFF_DATE" ]]; then
+                    echo "发现过期讨论: [$disc_title] ($disc_created)，正在删除..."
+                    gh api graphql -F id="$disc_id" -f query='
+                      mutation($id:ID!) {
+                        deleteDiscussion(input: {id: $id}) { clientMutationId }
+                      }' > /dev/null
+                    sleep 0.5 # 避免触发频控
+                  fi
+                done
+              fi
+            done
+            echo "历史旧讨论清理完成。"
+            # ==========================================
+            # 【清理逻辑结束】
+            # ==========================================
+
 
             # 2. 遍历临时文件，通过 GraphQL 创建 Discussion
             for meta_file in pending_posts/[0-9].md pending_posts/[0-9][0-9].md; do
